@@ -71,6 +71,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const videoURL = URL.createObjectURL(file);
         videoPreview.src = videoURL;
         videoPreview.style.display = 'block';
+
+        // Enviar o vídeo para o backend para conversão e transcrição
+        const formData = new FormData();
+        formData.append('video', file);
+
+        fetch('https://teu-backend.onrender.com/upload', {
+        method: 'POST',
+        body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log('Transcrição enviada:', data);
+            addLogEntry("Áudio enviado para transcrição com sucesso!", 'success');
+        })
+        .catch(err => {
+            console.error('Erro no envio para transcrição:', err);
+            addLogEntry("Erro ao enviar áudio para transcrição.", 'error');
+        });
+
         
         // Atualizar UI
         uploadArea.innerHTML = `
