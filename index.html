@@ -21,10 +21,13 @@
             </div>
             
             <div class="form-group">
-                <label for="closer-name">Nome do Closer:</label>
-                <select id="closer-name">
-                    <option value="">Selecione o closer</option>
-                </select>
+                <label for="closer-select">Nome do Closer:</label>
+                <div class="custom-select">
+                    <div class="select-selected" id="select-selected">Selecione o closer</div>
+                    <div class="select-items select-hide" id="select-items">
+                    </div>
+                    <input type="hidden" id="closer-name" value="">
+                </div>
             </div>
             
             <div class="form-group">

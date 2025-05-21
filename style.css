@@ -9,7 +9,9 @@
     z-index: 0;
     pointer-events: none;
     border-radius: 10px;
-}.gif-container {
+}
+
+.gif-container {
     position: relative;
     z-index: 2;
     background-color: transparent;
@@ -91,6 +93,93 @@ h1 {
     border: 1px solid #ddd;
     border-radius: 5px;
     font-size: 16px;
+}
+
+/* Estilos para o select customizado */
+.custom-select {
+    position: relative;
+    width: 100%;
+    font-family: inherit;
+    margin-bottom: 10px;
+}
+
+.select-selected {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    font-size: 16px;
+    transition: all 0.2s ease;
+}
+
+.select-selected:after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 15px;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #3498db;
+    transition: transform 0.3s;
+}
+
+.select-selected.select-arrow-active:after {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+.select-selected:hover {
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
+}
+
+.select-items {
+    position: absolute;
+    background-color: #fff;
+    top: 110%;
+    left: 0;
+    right: 0;
+    z-index: 99;
+    max-height: 250px;
+    overflow-y: auto;
+    border-radius: 5px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+.select-items div {
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.select-items div:hover {
+    background-color: #f0f8ff;
+}
+
+.select-items div.same-as-selected {
+    background-color: #e6f3ff;
+}
+
+.select-hide {
+    opacity: 0;
+    transform: translateY(-10px);
+    pointer-events: none;
+}
+
+.select-show {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: all;
 }
 
 .case-options {
