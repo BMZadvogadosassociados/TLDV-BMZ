@@ -14,11 +14,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Lista de closers para popular o select
     const closersList = [
-        "João Silva",
-        "Maria Souza",
-        "Carlos Oliveira",
+        "Elaine Oliveira",
+        "Millene Leal",
+        "Hilary Erddmann",
+        "João Guilherme",
+        "Evair Gonçalves",
+        "Fabio Petriw",
+        "José Henrique",
+        "Maria Rita",
         "Ana Paula",
-        "Roberto Lima"
+        "Lucas Silva",
+        "Stephanie Cobo",
+        "Amanda Kloster",
+        "Erica Okarenski",
+        "Gesisca Trzesniovski",
+        "Janayna Freisleben"
     ];
 
     // Popular o select de closer
