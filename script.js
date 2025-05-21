@@ -9,12 +9,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const processStatus = document.getElementById('process-status');
     const processLog = document.getElementById('process-log');
     const clientName = document.getElementById('client-name');
-    const closerInput = document.getElementById('closer-name');
-    const selectSelected = document.getElementById('select-selected');
-    const selectItems = document.getElementById('select-items');
+    const closerSelect = document.getElementById('closer-name');
     const caseTypeRadios = document.querySelectorAll('input[name="case-type"]');
 
-    // Lista de closers para popular o select customizado
+    // Lista de closers para popular o select
     const closersList = [
         "João Silva",
         "Maria Souza",
@@ -23,55 +21,13 @@ document.addEventListener('DOMContentLoaded', () => {
         "Roberto Lima"
     ];
 
-    // Popular o dropdown customizado
+    // Popular o select de closer
     closersList.forEach(closer => {
-        const option = document.createElement('div');
+        const option = document.createElement('option');
+        option.value = closer;
         option.textContent = closer;
-        option.addEventListener('click', function() {
-            closerInput.value = this.textContent;
-            selectSelected.textContent = this.textContent;
-            
-            // Remover classe "same-as-selected" de todos os itens
-            const items = selectItems.getElementsByTagName('div');
-            for (let i = 0; i < items.length; i++) {
-                items[i].classList.remove('same-as-selected');
-            }
-            
-            // Adicionar classe ao item selecionado
-            this.classList.add('same-as-selected');
-            
-            // Fechar dropdown
-            selectSelected.click();
-            
-            // Verificar validade do formulário
-            checkFormValidity();
-        });
-        selectItems.appendChild(option);
+        closerSelect.appendChild(option);
     });
-
-    // Toggle dropdown ao clicar no select
-    selectSelected.addEventListener('click', function(e) {
-        e.stopPropagation();
-        this.classList.toggle('select-arrow-active');
-        selectItems.classList.toggle('select-hide');
-        selectItems.classList.toggle('select-show');
-    });
-
-    // Fechar todos os select boxes quando clicar fora
-    document.addEventListener('click', function() {
-        selectSelected.classList.remove('select-arrow-active');
-        selectItems.classList.add('select-hide');
-        selectItems.classList.remove('select-show');
-    });
-
-    // Adicionando função para mensagem de log
-    window.addLogEntry = function(message, type = '') {
-        const entry = document.createElement('div');
-        entry.className = `log-entry ${type}`;
-        entry.textContent = message;
-        processLog.appendChild(entry);
-        processLog.scrollTop = processLog.scrollHeight;
-    }
 
     // Eventos para upload de arquivo
     uploadArea.addEventListener('click', () => fileInput.click());
@@ -101,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Verificação de campos preenchidos para habilitar botão
     function checkFormValidity() {
         const clientNameValid = clientName.value.trim() !== '';
-        const closerNameValid = closerInput.value.trim() !== '';
+        const closerNameValid = closerSelect.value.trim() !== '';
         const caseTypeValid = Array.from(caseTypeRadios).some(radio => radio.checked);
         const videoValid = videoPreview.src !== '';
 
@@ -110,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Evento para campos de texto
     clientName.addEventListener('input', checkFormValidity);
+    closerSelect.addEventListener('change', checkFormValidity);
 
     // Evento para botões de rádio
     caseTypeRadios.forEach(radio => {
@@ -170,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        if (!closerInput.value.trim()) {
+        if (!closerSelect.value.trim()) {
             alert('Por favor, informe o nome do closer');
             return;
         }
@@ -186,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Iniciar processo de lançamento no sistema
-        startProcessing(clientName.value, closerInput.value, selectedCaseType.value);
+        startProcessing(clientName.value, closerSelect.value, selectedCaseType.value);
     });
 
     // Simulação de processamento do caso
@@ -210,6 +167,15 @@ document.addEventListener('DOMContentLoaded', () => {
             { message: `Registrando caso no sistema para o closer ${closer}`, progress: 95 },
             { message: `Caso lançado com sucesso!`, progress: 100 }
         ];
+
+        // Função para adicionar uma mensagem ao log
+        function addLogEntry(message, type = '') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = message;
+            processLog.appendChild(entry);
+            processLog.scrollTop = processLog.scrollHeight;
+        }
 
         // Simulação do progresso
         let currentStep = 0;
@@ -256,15 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Função para resetar o formulário
     function resetForm() {
         clientName.value = '';
-        closerInput.value = '';
-        selectSelected.textContent = 'Selecione o closer';
-        
-        // Remover classe "same-as-selected" de todos os itens
-        const items = selectItems.getElementsByTagName('div');
-        for (let i = 0; i < items.length; i++) {
-            items[i].classList.remove('same-as-selected');
-        }
-        
+        closerSelect.value = '';
         caseTypeRadios.forEach(radio => radio.checked = false);
         videoPreview.src = '';
         videoPreview.style.display = 'none';
