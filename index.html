@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BMZ -  Armazenamento de Reuniões</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="header">
+        <img src="assets/Fundo Animado Bmz.gif" alt="BMZ Logo Animado" class="logo-gif">
+        <h1>BMZ -  Armazenamento de Reuniões</h1>
+    </div>
+    
+    <div class="container">
+        <div class="step">
+            <h2>Informações do Caso</h2>
+            <div class="form-group">
+                <label for="client-name">Nome do Cliente:</label>
+                <input type="text" id="client-name" placeholder="Digite o nome completo do cliente">
+            </div>
+            
+            <div class="form-group">
+                <label for="closer-name">Nome do Closer:</label>
+                <input type="text" id="closer-name" placeholder="Digite o nome do closer">
+            </div>
+            
+            <div class="form-group">
+                <label>Tipo de Caso:</label>
+                <div class="case-options">
+                    <div class="case-option">
+                        <input type="radio" id="auxilio-acidente" name="case-type" value="Auxílio Acidente">
+                        <label for="auxilio-acidente">Auxílio Acidente</label>
+                    </div>
+                    <div class="case-option">
+                        <input type="radio" id="trabalhista" name="case-type" value="Trabalhista">
+                        <label for="trabalhista">Trabalhista</label>
+                    </div>
+                    <div class="case-option">
+                        <input type="radio" id="adicional25" name="case-type" value="Adicional 25%">
+                        <label for="adicional25">Adicional 25%</label>
+                    </div>
+                    <div class="case-option">
+                        <input type="radio" id="isencao" name="case-type" value="Isenção">
+                        <label for="isencao">Isenção</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="step">
+            <h2>Selecione o vídeo da entrevista</h2>
+            <div class="upload-area" id="upload-area">
+                <div id="upload-icon">📁</div>
+                <p>Clique ou arraste um arquivo de vídeo aqui</p>
+                <p class="info-text">Formatos suportados: MP4, WebM, MOV, AVI</p>
+                <input type="file" id="file-input" accept="video/*">
+            </div>
+            <div id="video-container">
+                <video id="video-preview" controls></video>
+            </div>
+        </div>
+        
+        <div class="step">
+            <h2>Processar Caso</h2>
+            <button id="process-btn" disabled>Lançar no Sistema</button>
+            <div class="progress-container" id="process-progress">
+                <div class="progress-bar">
+                    <div class="progress" id="process-progress-bar"></div>
+                </div>
+                <p id="process-status">Aguardando...</p>
+            </div>
+        </div>
+        
+        <div class="step result-step">
+            <h2>Status do Processamento</h2>
+            <div id="process-log"></div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
