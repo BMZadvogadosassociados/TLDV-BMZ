@@ -103,10 +103,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const formData = new FormData();
         formData.append('video', file);
 
-        fetch('https://teu-backend.onrender.com/upload', {
+        fetch('http://localhost:3000/upload', {
             method: 'POST',
             body: formData
-        })
+        })       
         .then(res => res.json())
         .then(data => {
             console.log('Transcrição enviada:', data);
