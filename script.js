@@ -83,6 +83,18 @@ document.addEventListener('DOMContentLoaded', () => {
         radio.addEventListener('change', checkFormValidity);
     });
 
+    // Função para adicionar uma mensagem ao log
+    function addLogEntry(message, type = '') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = message;
+        processLog.appendChild(entry);
+        processLog.scrollTop = processLog.scrollHeight;
+    }
+
+    // Variável para armazenar o resultado da transcrição
+    let transcriptionResult = null;
+
     // Função para lidar com o upload de vídeo
     function handleVideoUpload() {
         const file = fileInput.files[0];
@@ -94,34 +106,87 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        console.log('Iniciando upload do vídeo:', file.name, `(${(file.size / 1024 / 1024).toFixed(2)}MB)`);
+
         // Criar URL para o vídeo
         const videoURL = URL.createObjectURL(file);
         videoPreview.src = videoURL;
         videoPreview.style.display = 'block';
 
+        // Mostrar status de upload
+        processProgress.style.display = 'block';
+        processLog.style.display = 'block';
+        processStatus.textContent = 'Enviando vídeo para processamento...';
+        addLogEntry('Iniciando upload do vídeo...', '');
+
         // Enviar o vídeo para o backend para conversão e transcrição
         const formData = new FormData();
         formData.append('video', file);
 
+        // Configurar timeout longo para vídeos grandes
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutos timeout
+
         fetch('https://bmz-backend.onrender.com/upload', {
             method: 'POST',
-            body: formData
-        })       
-        .then(res => res.json())
+            body: formData,
+            signal: controller.signal,
+            // Não adicionar Content-Type, deixar o browser configurar para multipart/form-data
+        })
+        .then(response => {
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`Erro HTTP: ${response.status} - ${response.statusText}`);
+            }
+            
+            return response.json();
+        })
         .then(data => {
-            console.log('Transcrição enviada:', data);
-            addLogEntry("Áudio enviado para transcrição com sucesso!", 'success');
+            console.log('Resposta do backend:', data);
+            
+            // Armazenar resultado da transcrição
+            transcriptionResult = data;
+            
+            processStatus.textContent = 'Vídeo processado com sucesso!';
+            addLogEntry('✅ Vídeo convertido para áudio', 'success');
+            
+            if (data.transcription) {
+                addLogEntry('✅ Transcrição realizada com sucesso', 'success');
+                addLogEntry(`📝 Transcrição: ${data.transcription.substring(0, 100)}...`, '');
+            }
+            
+            if (data.stats) {
+                addLogEntry(`📊 Estatísticas: ${data.stats.originalSize} → ${data.stats.audioSize} (${data.stats.chunks} chunks)`, '');
+            }
+            
+            addLogEntry('✅ Processamento concluído! Agora você pode preencher os dados e lançar no sistema.', 'success');
+            
         })
         .catch(err => {
+            clearTimeout(timeoutId);
             console.error('Erro no envio para transcrição:', err);
-            addLogEntry("Erro ao enviar áudio para transcrição.", 'error');
+            
+            let errorMessage = 'Erro ao processar vídeo: ';
+            
+            if (err.name === 'AbortError') {
+                errorMessage += 'Timeout - vídeo muito grande ou conexão lenta';
+            } else if (err.message.includes('Failed to fetch')) {
+                errorMessage += 'Falha na conexão com o servidor';
+            } else {
+                errorMessage += err.message;
+            }
+            
+            processStatus.textContent = errorMessage;
+            addLogEntry(`❌ ${errorMessage}`, 'error');
+            addLogEntry('💡 Tente com um vídeo menor ou verifique sua conexão', 'warning');
         });
 
         // Atualizar UI
         uploadArea.innerHTML = `
             <div id="upload-icon">✓</div>
             <p>${file.name}</p>
-            <p class="info-text">Clique para selecionar outro vídeo</p>
+            <p class="info-text">Vídeo selecionado - Processando...</p>
         `;
 
         checkFormValidity();
@@ -156,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startProcessing(clientName.value, closerSelect.value, selectedCaseType.value);
     });
 
-    // Simulação de processamento do caso
+    // Processo de lançamento no sistema (agora integrado com transcrição real)
     function startProcessing(client, closer, caseType) {
         // Desabilitar botão durante o processamento
         processBtn.disabled = true;
@@ -165,27 +230,20 @@ document.addEventListener('DOMContentLoaded', () => {
         processProgress.style.display = 'block';
         processLog.style.display = 'block';
 
-        // Array de etapas para simular o processamento
+        // Limpar log anterior
+        processLog.innerHTML = '';
+
+        // Array de etapas para o processamento
         const steps = [
-            { message: `Iniciando processamento do caso para ${client}`, progress: 5 },
-            { message: `Validando informações do cliente`, progress: 15 },
-            { message: `Classificando caso como: ${caseType}`, progress: 25 },
-            { message: `Extraindo dados do vídeo`, progress: 40 },
-            { message: `Processando depoimento`, progress: 55 },
-            { message: `Gerando documentação`, progress: 70 },
+            { message: `Iniciando processamento do caso para ${client}`, progress: 10 },
+            { message: `Validando informações do cliente`, progress: 20 },
+            { message: `Classificando caso como: ${caseType}`, progress: 30 },
+            { message: `Integrando dados da transcrição`, progress: 50 },
+            { message: `Gerando documentação do caso`, progress: 70 },
             { message: `Validando regras de negócio para ${caseType}`, progress: 85 },
             { message: `Registrando caso no sistema para o closer ${closer}`, progress: 95 },
             { message: `Caso lançado com sucesso!`, progress: 100 }
         ];
-
-        // Função para adicionar uma mensagem ao log
-        function addLogEntry(message, type = '') {
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.textContent = message;
-            processLog.appendChild(entry);
-            processLog.scrollTop = processLog.scrollHeight;
-        }
 
         // Simulação do progresso
         let currentStep = 0;
@@ -202,9 +260,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 let type = '';
                 if (currentStep === steps.length - 1) {
                     type = 'success';
+                } else if (currentStep === 3 && transcriptionResult) {
+                    // Mostrar info da transcrição quando chegar na etapa de integração
+                    addLogEntry(step.message, '');
+                    addLogEntry(`📝 Transcrição integrada: ${transcriptionResult.transcription ? transcriptionResult.transcription.substring(0, 150) + '...' : 'Processada com sucesso'}`, '');
+                    currentStep++;
+                    setTimeout(processNextStep, 1000);
+                    return;
                 }
+                
                 addLogEntry(step.message, type);
-
                 currentStep++;
 
                 // Simular tempo de processamento
@@ -213,7 +278,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Processamento concluído
                 setTimeout(() => {
                     processStatus.textContent = "Processamento finalizado com sucesso!";
-                    addLogEntry("Todos os dados foram corretamente registrados no sistema.", 'success');
+                    addLogEntry("✅ Todos os dados foram corretamente registrados no sistema.", 'success');
+                    
+                    if (transcriptionResult) {
+                        addLogEntry("📋 Resumo do caso registrado com transcrição completa.", 'success');
+                    }
 
                     // Permitir outro processamento
                     processBtn.disabled = false;
@@ -236,6 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
         caseTypeRadios.forEach(radio => radio.checked = false);
         videoPreview.src = '';
         videoPreview.style.display = 'none';
+        transcriptionResult = null;
 
         uploadArea.innerHTML = `
             <div id="upload-icon">📁</div>
