@@ -10,25 +10,26 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configurar CORS para permitir requisições do seu frontend no Vercel
+// Configurar CORS
 app.use(cors({
   origin: [
     'http://localhost:3000', 
-    'https://seu-frontend.vercel.app', // Substitua pela sua URL real do Vercel
-    /\.vercel\.app$/ // Permite qualquer subdomínio do Vercel
+    'https://seu-frontend.vercel.app',
+    /\.vercel\.app$/
   ],
   credentials: true
 }));
 
-// Middleware para parsing JSON
 app.use(express.json());
 
-// Cria pastas se não existirem
+// Criar diretórios necessários
 const uploadsDir = path.join(__dirname, 'uploads');
 const audiosDir = path.join(__dirname, 'audios');
+const chunksDir = path.join(__dirname, 'chunks');
 
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-if (!fs.existsSync(audiosDir)) fs.mkdirSync(audiosDir);
+[uploadsDir, audiosDir, chunksDir].forEach(dir => {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+});
 
 // Configuração do multer
 const storage = multer.diskStorage({
@@ -44,10 +45,9 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage,
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB
+    fileSize: 3 * 1024 * 1024 * 1024, // 3GB
   },
   fileFilter: (req, file, cb) => {
-    // Verificar se é um arquivo de vídeo
     if (file.mimetype.startsWith('video/')) {
       cb(null, true);
     } else {
@@ -56,125 +56,216 @@ const upload = multer({
   }
 });
 
-// Endpoint principal para upload e processamento
-app.post('/upload', upload.single('video'), (req, res) => {
-  console.log('Recebendo upload de vídeo...');
+// Função para dividir áudio em chunks de 20MB
+function splitAudioIntoChunks(audioPath, chunkDuration = 600) { // 10 minutos por chunk
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const audioFileName = path.basename(audioPath, path.extname(audioPath));
+    const chunkPattern = path.join(chunksDir, `${audioFileName}_chunk_%03d.mp3`);
+    
+    console.log(`Dividindo áudio em chunks de ${chunkDuration} segundos...`);
+    
+    ffmpeg(audioPath)
+      .outputOptions([
+        '-f', 'segment',
+        '-segment_time', chunkDuration.toString(),
+        '-c', 'copy'
+      ])
+      .output(chunkPattern)
+      .on('start', (commandLine) => {
+        console.log('Comando de divisão:', commandLine);
+      })
+      .on('end', () => {
+        // Encontrar todos os chunks criados
+        const chunkFiles = fs.readdirSync(chunksDir)
+          .filter(file => file.startsWith(`${audioFileName}_chunk_`))
+          .sort()
+          .map(file => path.join(chunksDir, file));
+        
+        console.log(`${chunkFiles.length} chunks criados`);
+        resolve(chunkFiles);
+      })
+      .on('error', (err) => {
+        console.error('Erro ao dividir áudio:', err);
+        reject(err);
+      })
+      .run();
+  });
+}
+
+// Função para transcrever um chunk usando OpenAI Whisper
+async function transcribeChunk(chunkPath, apiKey) {
+  const formData = new FormData();
+  formData.append('file', fs.createReadStream(chunkPath));
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'pt');
+  formData.append('response_format', 'text');
+  
+  try {
+    console.log(`Transcrevendo chunk: ${path.basename(chunkPath)}`);
+    
+    const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'Authorization': `Bearer ${apiKey}`
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      timeout: 120000 // 2 minutos timeout por chunk
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error(`Erro ao transcrever chunk ${path.basename(chunkPath)}:`, error.message);
+    throw error;
+  }
+}
+
+// Função para limpar arquivos temporários
+function cleanupFiles(files) {
+  files.forEach(file => {
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+        console.log(`Arquivo removido: ${path.basename(file)}`);
+      }
+    } catch (err) {
+      console.error(`Erro ao remover arquivo ${file}:`, err.message);
+    }
+  });
+}
+
+// Endpoint principal
+app.post('/upload', upload.single('video'), async (req, res) => {
+  console.log('=== INICIANDO PROCESSAMENTO DE VÍDEO ===');
   
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
   }
 
   const videoPath = path.join(uploadsDir, req.file.filename);
-  const mp3Path = path.join(audiosDir, `${req.file.filename}.mp3`);
+  const audioPath = path.join(audiosDir, `${req.file.filename}.mp3`);
+  const apiKey = process.env.TRANSCRIPTION_API_KEY;
 
-  console.log(`Convertendo vídeo: ${req.file.filename}`);
+  if (!apiKey || apiKey === 'test-key') {
+    return res.status(400).json({ 
+      error: 'API Key da OpenAI não configurada',
+      message: 'Configure TRANSCRIPTION_API_KEY nas variáveis de ambiente'
+    });
+  }
 
-  ffmpeg(videoPath)
-    .toFormat('mp3')
-    .audioChannels(1) // Mono para reduzir tamanho
-    .audioFrequency(16000) // 16kHz é suficiente para fala
-    .on('start', (commandLine) => {
-      console.log('FFmpeg iniciado:', commandLine);
-    })
-    .on('progress', (progress) => {
-      console.log('Progresso:', Math.round(progress.percent) + '%');
-    })
-    .on('error', (err) => {
-      console.error('Erro na conversão FFmpeg:', err);
-      
-      // Limpar arquivo de vídeo em caso de erro
-      try {
-        if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-      } catch (cleanupErr) {
-        console.error('Erro ao limpar arquivo:', cleanupErr);
-      }
-      
-      res.status(500).json({ 
-        error: 'Erro na conversão de áudio',
-        details: err.message 
-      });
-    })
-    .on('end', async () => {
-      console.log('Conversão concluída, enviando para API de transcrição...');
-      
-      try {
-        // Criar FormData para envio
-        const formData = new FormData();
-        formData.append('audio', fs.createReadStream(mp3Path));
-        
-        // Adicionar metadados se necessário
-        formData.append('language', 'pt-BR');
-        formData.append('model', 'whisper-1');
-        
-        // URL da API de transcrição - configure via variáveis de ambiente no Render
-        const transcriptionApiUrl = process.env.TRANSCRIPTION_API_URL || 'https://api.openai.com/v1/audio/transcriptions';
-        const apiKey = process.env.TRANSCRIPTION_API_KEY || 'sua-chave-api';
-        
-        console.log('Enviando para API de transcrição...');
-        
-        const response = await axios.post(transcriptionApiUrl, formData, {
-          headers: {
-            ...formData.getHeaders(),
-            'Authorization': `Bearer ${apiKey}`
-          },
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-          timeout: 60000 // 60 segundos
-        });
+  console.log(`Arquivo recebido: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)}MB)`);
 
-        console.log('Transcrição concluída com sucesso');
-        
-        res.status(200).json({ 
-          message: 'Vídeo processado e áudio enviado para transcrição com sucesso!',
-          transcriptionId: response.data.id || 'completed',
-          transcription: response.data.text || 'Transcrição processada'
-        });
-
-        // Limpar arquivos temporários após sucesso
-        setTimeout(() => {
-          try {
-            if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-            if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path);
-            console.log('Arquivos temporários limpos');
-          } catch (cleanupErr) {
-            console.error('Erro ao limpar arquivos:', cleanupErr);
+  try {
+    // Etapa 1: Converter vídeo para áudio
+    console.log('=== ETAPA 1: Convertendo vídeo para áudio ===');
+    await new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .toFormat('mp3')
+        .audioChannels(1) // Mono para reduzir tamanho
+        .audioFrequency(16000) // 16kHz para otimizar para fala
+        .audioBitrate('64k') // Bitrate baixo para reduzir tamanho
+        .on('start', (commandLine) => {
+          console.log('Conversão iniciada:', commandLine);
+        })
+        .on('progress', (progress) => {
+          if (progress.percent) {
+            console.log(`Progresso da conversão: ${Math.round(progress.percent)}%`);
           }
-        }, 5000); // Aguarda 5 segundos antes de limpar
-        
+        })
+        .on('error', reject)
+        .on('end', resolve)
+        .save(audioPath);
+    });
+
+    const audioStats = fs.statSync(audioPath);
+    console.log(`Áudio convertido: ${(audioStats.size / 1024 / 1024).toFixed(2)}MB`);
+
+    // Etapa 2: Dividir áudio em chunks se necessário
+    console.log('=== ETAPA 2: Verificando necessidade de divisão ===');
+    let chunkPaths = [];
+    
+    const maxChunkSize = 20 * 1024 * 1024; // 20MB
+    if (audioStats.size > maxChunkSize) {
+      console.log('Áudio muito grande, dividindo em chunks...');
+      chunkPaths = await splitAudioIntoChunks(audioPath, 600); // 10 minutos por chunk
+    } else {
+      console.log('Áudio pequeno o suficiente, processando diretamente');
+      chunkPaths = [audioPath];
+    }
+
+    // Etapa 3: Transcrever todos os chunks
+    console.log('=== ETAPA 3: Transcrevendo áudio ===');
+    const transcriptions = [];
+    
+    for (let i = 0; i < chunkPaths.length; i++) {
+      const chunkPath = chunkPaths[i];
+      console.log(`Transcrevendo chunk ${i + 1}/${chunkPaths.length}`);
+      
+      try {
+        const transcription = await transcribeChunk(chunkPath, apiKey);
+        transcriptions.push(transcription);
+        console.log(`Chunk ${i + 1} transcrito com sucesso`);
       } catch (error) {
-        console.error('Erro ao enviar para API de transcrição:', error.message);
-        
-        // Limpar arquivos em caso de erro
-        try {
-          if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
-          if (fs.existsSync(mp3Path)) fs.unlinkSync(mp3Path);
-        } catch (cleanupErr) {
-          console.error('Erro ao limpar arquivos:', cleanupErr);
-        }
-        
-        res.status(500).json({ 
-          error: 'Erro ao enviar para a API de transcrição',
-          details: error.response?.data?.error?.message || error.message
-        });
+        console.error(`Erro no chunk ${i + 1}:`, error.message);
+        // Continuar com os outros chunks mesmo se um falhar
+        transcriptions.push(`[Erro na transcrição do segmento ${i + 1}]`);
       }
-    })
-    .save(mp3Path);
+    }
+
+    // Etapa 4: Juntar todas as transcrições
+    console.log('=== ETAPA 4: Finalizando ===');
+    const fullTranscription = transcriptions.join(' ');
+    
+    console.log(`Transcrição completa: ${fullTranscription.length} caracteres`);
+
+    // Limpar arquivos temporários
+    const filesToClean = [videoPath, audioPath, ...chunkPaths.filter(path => path !== audioPath)];
+    setTimeout(() => cleanupFiles(filesToClean), 5000);
+
+    res.status(200).json({
+      message: 'Vídeo processado e transcrito com sucesso!',
+      transcription: fullTranscription,
+      stats: {
+        originalSize: `${(req.file.size / 1024 / 1024).toFixed(2)}MB`,
+        audioSize: `${(audioStats.size / 1024 / 1024).toFixed(2)}MB`,
+        chunks: chunkPaths.length,
+        transcriptionLength: fullTranscription.length
+      }
+    });
+
+    console.log('=== PROCESSAMENTO CONCLUÍDO COM SUCESSO ===');
+
+  } catch (error) {
+    console.error('=== ERRO NO PROCESSAMENTO ===', error);
+    
+    // Limpar arquivos em caso de erro
+    const filesToClean = [videoPath, audioPath];
+    cleanupFiles(filesToClean);
+    
+    res.status(500).json({
+      error: 'Erro no processamento do vídeo',
+      details: error.message
+    });
+  }
 });
 
-// Endpoint para verificar saúde do servidor
+// Endpoint de saúde
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    memoryUsage: process.memoryUsage()
   });
 });
 
 // Endpoint raiz
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'BMZ - Servidor de Transcrição está funcionando!',
-    version: '1.0.0',
+    message: 'BMZ - Servidor de Transcrição com Chunks está funcionando!',
+    version: '2.0.0',
+    features: ['Video upload', 'Audio conversion', 'Audio chunking', 'OpenAI Whisper transcription'],
     endpoints: ['/upload', '/health']
   });
 });
@@ -183,7 +274,7 @@ app.get('/', (req, res) => {
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'Arquivo muito grande. Máximo 100MB.' });
+      return res.status(400).json({ error: 'Arquivo muito grande. Máximo 3GB.' });
     }
   }
   
@@ -192,6 +283,7 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor BMZ rodando na porta ${PORT}`);
-  console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`🚀 BMZ Backend v2.0 rodando na porta ${PORT}`);
+  console.log(`🎥 Suporte a vídeos grandes com divisão em chunks`);
+  console.log(`🎙️ Integração com OpenAI Whisper`);
 });

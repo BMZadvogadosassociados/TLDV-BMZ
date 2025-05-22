@@ -6,12 +6,13 @@ services:
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
+    disk:
+      name: bmz-storage
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
-      - key: TRANSCRIPTION_API_URL
-        value: https://api.openai.com/v1/audio/transcriptions
       - key: TRANSCRIPTION_API_KEY
-        sync: false  # Você configurará isso manualmente no dashboard
-    autoDeploy: true
+        sync: false 
     branch: main
