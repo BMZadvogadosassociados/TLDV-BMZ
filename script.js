@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const formData = new FormData();
         formData.append('video', file);
 
-        fetch('http://localhost:3000/upload', {
+        fetch('https://bmz-backend.onrender.com/upload', {
             method: 'POST',
             body: formData
         })       
