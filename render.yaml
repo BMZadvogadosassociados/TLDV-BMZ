@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: bmz-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRANSCRIPTION_API_URL
+        value: https://api.openai.com/v1/audio/transcriptions
+      - key: TRANSCRIPTION_API_KEY
+        sync: false  # Você configurará isso manualmente no dashboard
+    autoDeploy: true
+    branch: main
