@@ -56,13 +56,14 @@ const upload = multer({
   }
 });
 
-// Função para dividir áudio em chunks menores (2 minutos cada para melhor análise)
-function splitAudioIntoSmallChunks(audioPath, chunkDuration = 120) { // 2 minutos
+// Função para dividir áudio em chunks de 20MB (limite do Whisper)
+function splitAudioIntoChunks(audioPath, chunkDuration = 600) { // 10 minutos por chunk
   return new Promise((resolve, reject) => {
+    const chunks = [];
     const audioFileName = path.basename(audioPath, path.extname(audioPath));
     const chunkPattern = path.join(chunksDir, `${audioFileName}_chunk_%03d.mp3`);
     
-    console.log(`Dividindo áudio em chunks de ${chunkDuration} segundos para análise...`);
+    console.log(`Dividindo áudio em chunks de ${chunkDuration} segundos...`);
     
     ffmpeg(audioPath)
       .outputOptions([
@@ -77,7 +78,7 @@ function splitAudioIntoSmallChunks(audioPath, chunkDuration = 120) { // 2 minuto
           .sort()
           .map(file => path.join(chunksDir, file));
         
-        console.log(`${chunkFiles.length} chunks criados para análise`);
+        console.log(`${chunkFiles.length} chunks criados`);
         resolve(chunkFiles);
       })
       .on('error', reject)
@@ -85,17 +86,16 @@ function splitAudioIntoSmallChunks(audioPath, chunkDuration = 120) { // 2 minuto
   });
 }
 
-// Função para transcrever chunk com timestamps (usando prompt especial)
-async function transcribeChunkWithSpeakers(chunkPath, chunkIndex, apiKey) {
+// Função para transcrever um chunk com Whisper
+async function transcribeChunk(chunkPath, apiKey) {
   const formData = new FormData();
   formData.append('file', fs.createReadStream(chunkPath));
   formData.append('model', 'whisper-1');
   formData.append('language', 'pt');
-  formData.append('response_format', 'verbose_json'); // Para ter timestamps
-  formData.append('prompt', 'Esta é uma conversa entre duas pessoas. Identifique mudanças de voz e pausas naturais.'); // Prompt para ajudar o Whisper
+  formData.append('response_format', 'text');
   
   try {
-    console.log(`Transcrevendo chunk ${chunkIndex + 1} com timestamps...`);
+    console.log(`Transcrevendo chunk: ${path.basename(chunkPath)}`);
     
     const response = await axios.post('https://api.openai.com/v1/audio/transcriptions', formData, {
       headers: {
@@ -107,140 +107,129 @@ async function transcribeChunkWithSpeakers(chunkPath, chunkIndex, apiKey) {
       timeout: 120000
     });
 
-    return {
-      chunkIndex,
-      text: response.data.text,
-      segments: response.data.segments || []
-    };
+    return response.data;
   } catch (error) {
-    console.error(`Erro ao transcrever chunk ${chunkIndex + 1}:`, error.message);
-    return {
-      chunkIndex,
-      text: `[Erro na transcrição do segmento ${chunkIndex + 1}]`,
-      segments: []
-    };
+    console.error(`Erro ao transcrever chunk ${path.basename(chunkPath)}:`, error.message);
+    throw error;
   }
 }
 
-// Função inteligente para organizar por pessoa usando análise de padrões
-function organizeTranscriptionByPatterns(transcriptionChunks) {
-  console.log('Organizando transcrição por padrões de fala...');
+// Função para processar texto com ChatGPT e separar falas
+async function separateSpeakersWithChatGPT(transcriptionText, apiKey) {
+  console.log('Usando ChatGPT para separar falas por pessoa...');
   
-  let organized = '';
-  let currentSpeaker = 1;
-  let speakerPattern = {};
+  // Dividir o texto em partes menores se for muito longo
+  const maxLength = 3000; // Limite para não exceder tokens do ChatGPT
+  const textParts = [];
   
-  // Analisar padrões em cada chunk
-  transcriptionChunks.forEach((chunk, chunkIndex) => {
-    if (!chunk.text || chunk.text.includes('Erro na transcrição')) {
-      organized += `\n\n**Segmento ${chunkIndex + 1}:** ${chunk.text}\n`;
-      return;
-    }
-
-    // Dividir por pausas longas e mudanças de contexto
-    const sentences = chunk.text
-      .split(/[\.\!\?]+/)
-      .map(s => s.trim())
-      .filter(s => s.length > 10);
-
-    sentences.forEach((sentence, sentenceIndex) => {
-      // Detectar mudanças de contexto que indicam mudança de pessoa
-      const contextChanges = [
-        /^(sim|não|ok|certo|entendi|ah|então)/i,
-        /^(doutor|doutora|senhor|senhora)/i,
-        /^(agora|mas|porém|entretanto)/i,
-        /\?(.*)/i // Perguntas geralmente indicam mudança de pessoa
-      ];
-
-      let shouldChangeSpeaker = false;
-      
-      // Verificar se há indicadores de mudança de pessoa
-      if (sentenceIndex === 0 && chunkIndex > 0) {
-        shouldChangeSpeaker = true; // Nova pessoa a cada chunk de 2 minutos
-      } else {
-        contextChanges.forEach(pattern => {
-          if (pattern.test(sentence)) {
-            shouldChangeSpeaker = true;
-          }
-        });
-      }
-
-      if (shouldChangeSpeaker) {
-        currentSpeaker = currentSpeaker === 1 ? 2 : 1;
-        organized += `\n\n**Pessoa ${currentSpeaker}:**\n`;
-      }
-
-      organized += sentence + '. ';
-    });
-  });
-
-  return organized.trim();
-}
-
-// Função melhorada para usar OpenAI com análise inteligente
-async function transcribeWithIntelligentDiarization(audioPath, apiKey) {
-  try {
-    const audioStats = fs.statSync(audioPath);
-    const maxChunkSize = 20 * 1024 * 1024; // 20MB para Whisper
-
-    let chunkPaths = [];
-    
-    if (audioStats.size > maxChunkSize) {
-      console.log('Áudio grande, dividindo em chunks pequenos para análise...');
-      chunkPaths = await splitAudioIntoSmallChunks(audioPath, 120); // 2 minutos cada
-    } else {
-      console.log('Áudio pequeno, processando diretamente...');
-      chunkPaths = [audioPath];
-    }
-
-    // Transcrever todos os chunks com informações detalhadas
-    const transcriptionChunks = [];
-    
-    for (let i = 0; i < chunkPaths.length; i++) {
-      const chunkResult = await transcribeChunkWithSpeakers(chunkPaths[i], i, apiKey);
-      transcriptionChunks.push(chunkResult);
-    }
-
-    // Juntar transcrição completa
-    const fullTranscription = transcriptionChunks
-      .map(chunk => chunk.text)
-      .join(' ');
-
-    // Organizar por pessoa usando análise inteligente
-    const organizedTranscription = organizeTranscriptionByPatterns(transcriptionChunks);
-
-    // Usar ChatGPT para melhorar a organização (opcional)
-    let improvedOrganization = organizedTranscription;
-    
+  for (let i = 0; i < transcriptionText.length; i += maxLength) {
+    textParts.push(transcriptionText.substring(i, i + maxLength));
+  }
+  
+  let organizedParts = [];
+  
+  for (let i = 0; i < textParts.length; i++) {
     try {
-      console.log('Melhorando organização com ChatGPT...');
-      const chatResponse = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: 'gpt-3.5-turbo',
+      console.log(`Processando parte ${i + 1}/${textParts.length} com ChatGPT...`);
+      
+      const prompt = `Você é um especialista em análise de conversas. Sua tarefa é identificar e separar as falas de diferentes pessoas em uma transcrição de áudio.
+
+INSTRUÇÕES:
+1. Analise o texto e identifique quando uma pessoa diferente está falando
+2. Separe as falas usando o formato "**Pessoa 1:**" e "**Pessoa 2:**"
+3. Identifique mudanças de pessoa por:
+   - Mudanças no estilo de fala
+   - Perguntas e respostas
+   - Pausas naturais na conversa
+   - Contexto e conteúdo das falas
+4. Mantenha todo o conteúdo original, apenas organize por pessoa
+
+TEXTO PARA ANALISAR:
+${textParts[i]}
+
+RESPOSTA (organize por pessoa):`;
+
+      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+        model: 'gpt-4o-mini', // Modelo mais barato e eficiente
         messages: [
           {
             role: 'system',
-            content: 'Você é um assistente que organiza transcrições de conversas identificando diferentes pessoas. Organize o texto separando claramente as falas de cada pessoa. Use "**Pessoa 1:**" e "**Pessoa 2:**" para identificar os falantes.'
+            content: 'Você é um especialista em análise de conversas que identifica diferentes pessoas falando em transcrições de áudio. Seja preciso ao separar as falas.'
           },
           {
             role: 'user',
-            content: `Organize esta transcrição identificando quando cada pessoa fala:\n\n${fullTranscription.substring(0, 3000)}` // Primeiros 3000 caracteres para não exceder limite
+            content: prompt
           }
         ],
         max_tokens: 1500,
-        temperature: 0.3
+        temperature: 0.1 // Baixa temperatura para ser mais preciso
       }, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 30000
       });
 
-      if (chatResponse.data.choices && chatResponse.data.choices[0]) {
-        improvedOrganization = chatResponse.data.choices[0].message.content;
+      if (response.data.choices && response.data.choices[0]) {
+        organizedParts.push(response.data.choices[0].message.content);
+      } else {
+        organizedParts.push(`**Parte ${i + 1}:**\n${textParts[i]}`);
       }
-    } catch (chatError) {
-      console.log('ChatGPT não disponível, usando análise básica');
+      
+      // Pequena pausa entre requisições
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+    } catch (error) {
+      console.error(`Erro ao processar parte ${i + 1} com ChatGPT:`, error.message);
+      organizedParts.push(`**Parte ${i + 1} (Erro na análise):**\n${textParts[i]}`);
     }
+  }
+  
+  return organizedParts.join('\n\n');
+}
+
+// Função principal de transcrição com separação de falas
+async function transcribeWithSpeakerSeparation(audioPath, apiKey) {
+  try {
+    const audioStats = fs.statSync(audioPath);
+    const maxChunkSize = 20 * 1024 * 1024; // 20MB
+
+    let chunkPaths = [];
+    
+    if (audioStats.size > maxChunkSize) {
+      console.log('Áudio muito grande, dividindo em chunks...');
+      chunkPaths = await splitAudioIntoChunks(audioPath, 600); // 10 minutos por chunk
+    } else {
+      console.log('Áudio pequeno o suficiente, processando diretamente');
+      chunkPaths = [audioPath];
+    }
+
+    // Etapa 1: Transcrever todos os chunks
+    console.log('=== TRANSCREVENDO ÁUDIO ===');
+    const transcriptions = [];
+    
+    for (let i = 0; i < chunkPaths.length; i++) {
+      const chunkPath = chunkPaths[i];
+      console.log(`Transcrevendo chunk ${i + 1}/${chunkPaths.length}`);
+      
+      try {
+        const transcription = await transcribeChunk(chunkPath, apiKey);
+        transcriptions.push(transcription);
+        console.log(`Chunk ${i + 1} transcrito com sucesso`);
+      } catch (error) {
+        console.error(`Erro no chunk ${i + 1}:`, error.message);
+        transcriptions.push(`[Erro na transcrição do segmento ${i + 1}]`);
+      }
+    }
+
+    // Etapa 2: Juntar transcrição completa
+    const fullTranscription = transcriptions.join(' ');
+    console.log(`Transcrição completa: ${fullTranscription.length} caracteres`);
+
+    // Etapa 3: Separar falas com ChatGPT
+    console.log('=== SEPARANDO FALAS POR PESSOA ===');
+    const organizedTranscription = await separateSpeakersWithChatGPT(fullTranscription, apiKey);
 
     // Limpar chunks temporários
     if (chunkPaths.length > 1) {
@@ -257,13 +246,13 @@ async function transcribeWithIntelligentDiarization(audioPath, apiKey) {
 
     return {
       text: fullTranscription,
-      organized: improvedOrganization,
-      chunks: transcriptionChunks.length,
-      method: 'OpenAI Whisper + Análise Inteligente'
+      organized: organizedTranscription,
+      chunks: chunkPaths.length,
+      method: 'OpenAI Whisper + ChatGPT 4o-mini'
     };
 
   } catch (error) {
-    console.error('Erro na transcrição inteligente:', error.message);
+    console.error('Erro na transcrição com separação:', error.message);
     throw error;
   }
 }
@@ -284,7 +273,7 @@ function cleanupFiles(files) {
 
 // Endpoint principal
 app.post('/upload', upload.single('video'), async (req, res) => {
-  console.log('=== INICIANDO PROCESSAMENTO COM SEPARAÇÃO INTELIGENTE ===');
+  console.log('=== INICIANDO PROCESSAMENTO COM SEPARAÇÃO REAL DE FALAS ===');
   
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
@@ -328,19 +317,19 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     const audioStats = fs.statSync(audioPath);
     console.log(`Áudio convertido: ${(audioStats.size / 1024 / 1024).toFixed(2)}MB`);
 
-    // Etapa 2: Transcrever com separação inteligente
-    console.log('=== ETAPA 2: Transcrevendo com separação inteligente ===');
-    const transcriptionResult = await transcribeWithIntelligentDiarization(audioPath, apiKey);
+    // Etapa 2: Transcrever com separação real de falas
+    console.log('=== ETAPA 2: Transcrevendo com separação real de falas ===');
+    const transcriptionResult = await transcribeWithSpeakerSeparation(audioPath, apiKey);
 
     console.log('=== ETAPA 3: Finalizando ===');
-    console.log(`Transcrição completa: ${transcriptionResult.text.length} caracteres`);
+    console.log(`Transcrição organizada: ${transcriptionResult.organized.length} caracteres`);
 
     // Limpar arquivos temporários
     const filesToClean = [videoPath, audioPath];
     setTimeout(() => cleanupFiles(filesToClean), 5000);
 
     res.status(200).json({
-      message: 'Vídeo processado e transcrito com separação inteligente!',
+      message: 'Vídeo processado com separação real de falas!',
       transcription: transcriptionResult.text,
       organized_transcription: transcriptionResult.organized,
       stats: {
@@ -348,7 +337,8 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         audioSize: `${(audioStats.size / 1024 / 1024).toFixed(2)}MB`,
         chunks: transcriptionResult.chunks,
         transcriptionLength: transcriptionResult.text.length,
-        diarization: 'Análise Inteligente com OpenAI',
+        organizedLength: transcriptionResult.organized.length,
+        diarization: 'ChatGPT 4o-mini',
         method: transcriptionResult.method
       }
     });
@@ -368,7 +358,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
   }
 });
 
-// Endpoints de saúde e raiz (mantendo iguais...)
+// Endpoints de saúde e raiz
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -376,17 +366,17 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     features: {
       openai_whisper: !!process.env.TRANSCRIPTION_API_KEY,
-      intelligent_diarization: true,
-      chatgpt_enhancement: !!process.env.TRANSCRIPTION_API_KEY
+      chatgpt_speaker_separation: !!process.env.TRANSCRIPTION_API_KEY,
+      real_diarization: true
     }
   });
 });
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'BMZ - Servidor com Separação Inteligente por Pessoa!',
-    version: '4.0.0',
-    features: ['Video upload', 'Audio conversion', 'Intelligent speaker separation', 'OpenAI Whisper + ChatGPT'],
+    message: 'BMZ - Servidor com Separação REAL de Falas!',
+    version: '5.0.0',
+    features: ['Video upload', 'Audio conversion', 'Real speaker separation', 'OpenAI Whisper + ChatGPT 4o-mini'],
     endpoints: ['/upload', '/health']
   });
 });
@@ -400,12 +390,13 @@ app.use((error, req, res, next) => {
   }
   
   console.error('Erro não tratado:', error);
-  res.status(500).json({ error: 'Erro interno do servidor' });
+  res.status.json({ error: 'Erro interno do servidor' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 BMZ Backend v4.0 com Separação Inteligente`);
+  console.log(`🚀 BMZ Backend v5.0 com Separação REAL de Falas`);
   console.log(`🎥 Suporte a vídeos grandes`);
-  console.log(`🤖 OpenAI Whisper + ChatGPT para organização`);
-  console.log(`👥 Separação por pessoa sem limite de uso`);
+  console.log(`🎙️ Whisper para transcrição`);
+  console.log(`🤖 ChatGPT 4o-mini para separação de falas`);
+  console.log(`👥 Separação real por pessoa`);
 });
