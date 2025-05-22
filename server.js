@@ -114,79 +114,148 @@ async function transcribeChunk(chunkPath, apiKey) {
   }
 }
 
-// Função para processar texto com ChatGPT e separar falas
-async function separateSpeakersWithChatGPT(transcriptionText, apiKey) {
-  console.log('Usando ChatGPT para separar falas por pessoa...');
+// Função para separar falas usando padrões específicos de conversas jurídicas
+function separateSpeakersByPatterns(transcriptionText) {
+  console.log('Separando falas por padrões específicos...');
   
-  // Dividir o texto em partes menores se for muito longo
-  const maxLength = 3000; // Limite para não exceder tokens do ChatGPT
-  const textParts = [];
-  
-  for (let i = 0; i < transcriptionText.length; i += maxLength) {
-    textParts.push(transcriptionText.substring(i, i + maxLength));
-  }
-  
-  let organizedParts = [];
-  
-  for (let i = 0; i < textParts.length; i++) {
-    try {
-      console.log(`Processando parte ${i + 1}/${textParts.length} com ChatGPT...`);
-      
-      const prompt = `Você é um especialista em análise de conversas. Sua tarefa é identificar e separar as falas de diferentes pessoas em uma transcrição de áudio.
-
-INSTRUÇÕES:
-1. Analise o texto e identifique quando uma pessoa diferente está falando
-2. Separe as falas usando o formato "**Pessoa 1:**" e "**Pessoa 2:**"
-3. Identifique mudanças de pessoa por:
-   - Mudanças no estilo de fala
-   - Perguntas e respostas
-   - Pausas naturais na conversa
-   - Contexto e conteúdo das falas
-4. Mantenha todo o conteúdo original, apenas organize por pessoa
-
-TEXTO PARA ANALISAR:
-${textParts[i]}
-
-RESPOSTA (organize por pessoa):`;
-
-      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: 'gpt-4o-mini', // Modelo mais barato e eficiente
-        messages: [
-          {
-            role: 'system',
-            content: 'Você é um especialista em análise de conversas que identifica diferentes pessoas falando em transcrições de áudio. Seja preciso ao separar as falas.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        max_tokens: 1500,
-        temperature: 0.1 // Baixa temperatura para ser mais preciso
-      }, {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
-      });
-
-      if (response.data.choices && response.data.choices[0]) {
-        organizedParts.push(response.data.choices[0].message.content);
-      } else {
-        organizedParts.push(`**Parte ${i + 1}:**\n${textParts[i]}`);
-      }
-      
-      // Pequena pausa entre requisições
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-    } catch (error) {
-      console.error(`Erro ao processar parte ${i + 1} com ChatGPT:`, error.message);
-      organizedParts.push(`**Parte ${i + 1} (Erro na análise):**\n${textParts[i]}`);
+  // Padrões que indicam mudança de pessoa
+  const patterns = [
+    // Advogado fazendo perguntas
+    { 
+      regex: /(ok\.?\s+|certo\.?\s+|então\.?\s+|agora\.?\s+)?((só )?para confirmar|vamos confirmar|me confirma|confirma pra mim|você pode confirmar)/i,
+      speaker: 'Advogado(a)'
+    },
+    {
+      regex: /(qual|como|quando|onde|por que|quantos?|que tipo)/i,
+      speaker: 'Advogado(a)'
+    },
+    {
+      regex: /(a senhora|o senhor|você).+(recebe|tem|fez|trabalhou|está)/i,
+      speaker: 'Advogado(a)'
+    },
+    // Cliente respondendo
+    {
+      regex: /^(sim|não|isso|exato|correto|é|ah|bom|então)[\s\.,]/i,
+      speaker: 'Cliente'
+    },
+    {
+      regex: /(eu|meu|minha|meus|minhas).+(trabalho|recebo|tenho|fiz|sou|era)/i,
+      speaker: 'Cliente'
+    },
+    {
+      regex: /(aposentadoria|pensão|benefício|inss|hospital|médico|cirurgia|tratamento)/i,
+      speaker: 'Cliente'
     }
+  ];
+
+  // Dividir texto em sentenças
+  const sentences = transcriptionText
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 10);
+
+  let organized = '';
+  let currentSpeaker = null;
+  let speakerCounts = { 'Advogado(a)': 0, 'Cliente': 0 };
+  
+  sentences.forEach((sentence, index) => {
+    let detectedSpeaker = null;
+    
+    // Verificar padrões para identificar o falante
+    for (const pattern of patterns) {
+      if (pattern.regex.test(sentence)) {
+        detectedSpeaker = pattern.speaker;
+        break;
+      }
+    }
+    
+    // Se não detectou padrão específico, usar lógica contextual
+    if (!detectedSpeaker) {
+      // Se a sentença anterior foi uma pergunta (advogado), essa provavelmente é resposta (cliente)
+      if (index > 0 && sentences[index - 1].includes('?')) {
+        detectedSpeaker = 'Cliente';
+      }
+      // Se contém primeira pessoa, provavelmente é cliente
+      else if (/(^|\s)(eu|meu|minha|meus|minhas)\s/i.test(sentence)) {
+        detectedSpeaker = 'Cliente';
+      }
+      // Se contém segunda pessoa, provavelmente é advogado
+      else if (/(^|\s)(você|senhor|senhora|seu|sua)\s/i.test(sentence)) {
+        detectedSpeaker = 'Advogado(a)';
+      }
+      // Alternar entre os dois se não conseguir identificar
+      else {
+        detectedSpeaker = speakerCounts['Advogado(a)'] <= speakerCounts['Cliente'] ? 'Advogado(a)' : 'Cliente';
+      }
+    }
+    
+    // Adicionar mudança de falante se necessário
+    if (detectedSpeaker !== currentSpeaker) {
+      if (organized.length > 0) organized += '\n\n';
+      organized += `**${detectedSpeaker}:**\n`;
+      currentSpeaker = detectedSpeaker;
+      speakerCounts[detectedSpeaker]++;
+    }
+    
+    organized += sentence.trim() + '. ';
+  });
+  
+  return organized.trim();
+}
+
+// Função alternativa usando ChatGPT como backup
+async function separateSpeakersWithChatGPT(transcriptionText, apiKey) {
+  console.log('Tentando separação com ChatGPT...');
+  
+  try {
+    // Usar apenas os primeiros 2000 caracteres para não exceder limites
+    const textToAnalyze = transcriptionText.substring(0, 2000);
+    
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'Você é um assistente que organiza transcrições de entrevistas jurídicas. Separe as falas entre Advogado(a) e Cliente usando o formato "**Advogado(a):**" e "**Cliente:**". Identifique quem fala baseado no contexto: advogados fazem perguntas e clientes respondem sobre sua vida pessoal.'
+        },
+        {
+          role: 'user',
+          content: `Organize esta transcrição separando as falas:\n\n${textToAnalyze}`
+        }
+      ],
+      max_tokens: 1000,
+      temperature: 0.1
+    }, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
+    });
+
+    if (response.data.choices && response.data.choices[0]) {
+      const organizedPart = response.data.choices[0].message.content;
+      
+      // Se o ChatGPT funcionou, usar o resultado + aplicar nos resto do texto
+      if (organizedPart.includes('**Advogado(a):**') || organizedPart.includes('**Cliente:**')) {
+        console.log('ChatGPT funcionou, aplicando padrões ao resto...');
+        
+        // Aplicar padrões no resto do texto se for maior
+        if (transcriptionText.length > 2000) {
+          const remainingText = transcriptionText.substring(2000);
+          const remainingOrganized = separateSpeakersByPatterns(remainingText);
+          return organizedPart + '\n\n' + remainingOrganized;
+        }
+        
+        return organizedPart;
+      }
+    }
+  } catch (error) {
+    console.log('ChatGPT falhou, usando padrões:', error.message);
   }
   
-  return organizedParts.join('\n\n');
+  // Se ChatGPT falhar, usar padrões
+  return separateSpeakersByPatterns(transcriptionText);
 }
 
 // Função principal de transcrição com separação de falas
@@ -227,7 +296,7 @@ async function transcribeWithSpeakerSeparation(audioPath, apiKey) {
     const fullTranscription = transcriptions.join(' ');
     console.log(`Transcrição completa: ${fullTranscription.length} caracteres`);
 
-    // Etapa 3: Separar falas com ChatGPT
+    // Etapa 3: Separar falas (tentativa com ChatGPT + padrões como backup)
     console.log('=== SEPARANDO FALAS POR PESSOA ===');
     const organizedTranscription = await separateSpeakersWithChatGPT(fullTranscription, apiKey);
 
@@ -248,7 +317,7 @@ async function transcribeWithSpeakerSeparation(audioPath, apiKey) {
       text: fullTranscription,
       organized: organizedTranscription,
       chunks: chunkPaths.length,
-      method: 'OpenAI Whisper + ChatGPT 4o-mini'
+      method: 'OpenAI Whisper + Padrões Específicos + ChatGPT'
     };
 
   } catch (error) {
@@ -273,7 +342,7 @@ function cleanupFiles(files) {
 
 // Endpoint principal
 app.post('/upload', upload.single('video'), async (req, res) => {
-  console.log('=== INICIANDO PROCESSAMENTO COM SEPARAÇÃO REAL DE FALAS ===');
+  console.log('=== INICIANDO PROCESSAMENTO COM SEPARAÇÃO FORÇADA ===');
   
   if (!req.file) {
     return res.status(400).json({ error: 'Nenhum arquivo foi enviado' });
@@ -317,8 +386,8 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     const audioStats = fs.statSync(audioPath);
     console.log(`Áudio convertido: ${(audioStats.size / 1024 / 1024).toFixed(2)}MB`);
 
-    // Etapa 2: Transcrever com separação real de falas
-    console.log('=== ETAPA 2: Transcrevendo com separação real de falas ===');
+    // Etapa 2: Transcrever com separação forçada de falas
+    console.log('=== ETAPA 2: Transcrevendo com separação forçada ===');
     const transcriptionResult = await transcribeWithSpeakerSeparation(audioPath, apiKey);
 
     console.log('=== ETAPA 3: Finalizando ===');
@@ -329,7 +398,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     setTimeout(() => cleanupFiles(filesToClean), 5000);
 
     res.status(200).json({
-      message: 'Vídeo processado com separação real de falas!',
+      message: 'Vídeo processado com separação forçada de falas!',
       transcription: transcriptionResult.text,
       organized_transcription: transcriptionResult.organized,
       stats: {
@@ -338,7 +407,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         chunks: transcriptionResult.chunks,
         transcriptionLength: transcriptionResult.text.length,
         organizedLength: transcriptionResult.organized.length,
-        diarization: 'ChatGPT 4o-mini',
+        diarization: 'Padrões Específicos + ChatGPT',
         method: transcriptionResult.method
       }
     });
@@ -366,17 +435,17 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     features: {
       openai_whisper: !!process.env.TRANSCRIPTION_API_KEY,
-      chatgpt_speaker_separation: !!process.env.TRANSCRIPTION_API_KEY,
-      real_diarization: true
+      pattern_based_separation: true,
+      chatgpt_backup: !!process.env.TRANSCRIPTION_API_KEY
     }
   });
 });
 
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'BMZ - Servidor com Separação REAL de Falas!',
-    version: '5.0.0',
-    features: ['Video upload', 'Audio conversion', 'Real speaker separation', 'OpenAI Whisper + ChatGPT 4o-mini'],
+    message: 'BMZ - Servidor com Separação FORÇADA de Falas!',
+    version: '6.0.0',
+    features: ['Video upload', 'Audio conversion', 'Forced speaker separation', 'Legal interview patterns'],
     endpoints: ['/upload', '/health']
   });
 });
@@ -390,13 +459,13 @@ app.use((error, req, res, next) => {
   }
   
   console.error('Erro não tratado:', error);
-  res.status.json({ error: 'Erro interno do servidor' });
+  res.status(500).json({ error: 'Erro interno do servidor' });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 BMZ Backend v5.0 com Separação REAL de Falas`);
+  console.log(`🚀 BMZ Backend v6.0 com Separação FORÇADA`);
   console.log(`🎥 Suporte a vídeos grandes`);
   console.log(`🎙️ Whisper para transcrição`);
-  console.log(`🤖 ChatGPT 4o-mini para separação de falas`);
-  console.log(`👥 Separação real por pessoa`);
+  console.log(`⚖️ Padrões específicos para conversas jurídicas`);
+  console.log(`🤖 ChatGPT como backup`);
 });
