@@ -92,6 +92,165 @@ document.addEventListener('DOMContentLoaded', () => {
         processLog.scrollTop = processLog.scrollHeight;
     }
 
+    // Função para criar botão de visualizar transcrição
+    function createTranscriptionButton(transcription) {
+        const button = document.createElement('button');
+        button.textContent = '📄 Ver Transcrição Completa';
+        button.style.cssText = `
+            background-color: #2ecc71;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 0;
+            font-size: 14px;
+        `;
+        
+        button.addEventListener('click', () => {
+            showTranscriptionModal(transcription);
+        });
+        
+        return button;
+    }
+
+    // Função para mostrar modal com transcrição completa
+    function showTranscriptionModal(transcription) {
+        // Criar modal
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = `
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        `;
+
+        const title = document.createElement('h3');
+        title.textContent = '📄 Transcrição Completa';
+        title.style.margin = '0';
+        title.style.color = '#333';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '✕';
+        closeBtn.style.cssText = `
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            color: #666;
+        `;
+        closeBtn.addEventListener('click', () => document.body.removeChild(modal));
+
+        const transcriptionText = document.createElement('div');
+        transcriptionText.style.cssText = `
+            line-height: 1.6;
+            font-size: 16px;
+            color: #333;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        `;
+        transcriptionText.textContent = transcription;
+
+        const actions = document.createElement('div');
+        actions.style.cssText = `
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        `;
+
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = '📋 Copiar Texto';
+        copyBtn.style.cssText = `
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        `;
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(transcription).then(() => {
+                copyBtn.textContent = '✅ Copiado!';
+                setTimeout(() => {
+                    copyBtn.textContent = '📋 Copiar Texto';
+                }, 2000);
+            });
+        });
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.textContent = '💾 Baixar TXT';
+        downloadBtn.style.cssText = `
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        `;
+        downloadBtn.addEventListener('click', () => {
+            const blob = new Blob([transcription], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `transcricao_${clientName.value || 'cliente'}_${new Date().toISOString().slice(0, 10)}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        actions.appendChild(copyBtn);
+        actions.appendChild(downloadBtn);
+        
+        modalContent.appendChild(header);
+        modalContent.appendChild(transcriptionText);
+        modalContent.appendChild(actions);
+        modal.appendChild(modalContent);
+        
+        document.body.appendChild(modal);
+
+        // Fechar modal clicando fora
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+    }
+
     // Variável para armazenar o resultado da transcrição
     let transcriptionResult = null;
 
@@ -131,7 +290,6 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             body: formData,
             signal: controller.signal,
-            // Não adicionar Content-Type, deixar o browser configurar para multipart/form-data
         })
         .then(response => {
             clearTimeout(timeoutId);
@@ -154,6 +312,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (data.transcription) {
                 addLogEntry('✅ Transcrição realizada com sucesso', 'success');
                 addLogEntry(`📝 Transcrição: ${data.transcription.substring(0, 100)}...`, '');
+                
+                // Adicionar botão para ver transcrição completa
+                const transcriptionBtn = createTranscriptionButton(data.transcription);
+                processLog.appendChild(transcriptionBtn);
             }
             
             if (data.stats) {
@@ -192,9 +354,11 @@ document.addEventListener('DOMContentLoaded', () => {
         checkFormValidity();
     }
 
+    // Resto do código permanece igual...
+    // (mantendo as funções startProcessing, resetForm, etc. como estavam)
+
     // Evento para o botão de processar
     processBtn.addEventListener('click', () => {
-        // Verificar se os campos necessários estão preenchidos
         const selectedCaseType = document.querySelector('input[name="case-type"]:checked');
 
         if (!clientName.value.trim()) {
@@ -217,23 +381,15 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Iniciar processo de lançamento no sistema
         startProcessing(clientName.value, closerSelect.value, selectedCaseType.value);
     });
 
-    // Processo de lançamento no sistema (agora integrado com transcrição real)
     function startProcessing(client, closer, caseType) {
-        // Desabilitar botão durante o processamento
         processBtn.disabled = true;
-
-        // Mostrar barra de progresso
         processProgress.style.display = 'block';
         processLog.style.display = 'block';
-
-        // Limpar log anterior
         processLog.innerHTML = '';
 
-        // Array de etapas para o processamento
         const steps = [
             { message: `Iniciando processamento do caso para ${client}`, progress: 10 },
             { message: `Validando informações do cliente`, progress: 20 },
@@ -245,25 +401,27 @@ document.addEventListener('DOMContentLoaded', () => {
             { message: `Caso lançado com sucesso!`, progress: 100 }
         ];
 
-        // Simulação do progresso
         let currentStep = 0;
 
         function processNextStep() {
             if (currentStep < steps.length) {
                 const step = steps[currentStep];
-
-                // Atualizar barra de progresso
                 processProgressBar.style.width = `${step.progress}%`;
                 processStatus.textContent = step.message;
-
-                // Adicionar ao log
+                
                 let type = '';
                 if (currentStep === steps.length - 1) {
                     type = 'success';
                 } else if (currentStep === 3 && transcriptionResult) {
-                    // Mostrar info da transcrição quando chegar na etapa de integração
                     addLogEntry(step.message, '');
                     addLogEntry(`📝 Transcrição integrada: ${transcriptionResult.transcription ? transcriptionResult.transcription.substring(0, 150) + '...' : 'Processada com sucesso'}`, '');
+                    
+                    // Adicionar botão de transcrição novamente no processamento final
+                    if (transcriptionResult.transcription) {
+                        const transcriptionBtn = createTranscriptionButton(transcriptionResult.transcription);
+                        processLog.appendChild(transcriptionBtn);
+                    }
+                    
                     currentStep++;
                     setTimeout(processNextStep, 1000);
                     return;
@@ -271,11 +429,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 addLogEntry(step.message, type);
                 currentStep++;
-
-                // Simular tempo de processamento
                 setTimeout(processNextStep, 800 + Math.random() * 1200);
             } else {
-                // Processamento concluído
                 setTimeout(() => {
                     processStatus.textContent = "Processamento finalizado com sucesso!";
                     addLogEntry("✅ Todos os dados foram corretamente registrados no sistema.", 'success');
@@ -284,21 +439,16 @@ document.addEventListener('DOMContentLoaded', () => {
                         addLogEntry("📋 Resumo do caso registrado com transcrição completa.", 'success');
                     }
 
-                    // Permitir outro processamento
                     processBtn.disabled = false;
                     processBtn.textContent = "Processar Novo Caso";
-
-                    // Limpar campos para novo caso
                     processBtn.addEventListener('click', resetForm, { once: true });
                 }, 1000);
             }
         }
 
-        // Iniciar processamento
         setTimeout(processNextStep, 500);
     }
 
-    // Função para resetar o formulário
     function resetForm() {
         clientName.value = '';
         closerSelect.value = '';
